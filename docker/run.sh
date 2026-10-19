@@ -35,7 +35,7 @@ REMAP=""
 if [ "$TARGET" != off ]; then
   # a pult/gamepad nem közvetlenül a cmd_managernek küld, hanem a követőnek
   REMAP="--ros-args -r hyperdog_joy_ctrl_cmd:=teleop_cmd"
-  python3 /opt/hiperkutya/target_follower.py --ros-args -p use_sim_time:=true -p yaw_sign:=-1.0 > /tmp/follower.log 2>&1 &
+  python3 /opt/hiperkutya/target_follower.py --ros-args -p use_sim_time:=true > /tmp/follower.log 2>&1 &
 fi
 if [ "$TARGET" = sim ]; then
   python3 /opt/hiperkutya/sim_target.py --ros-args -p use_sim_time:=true > /tmp/sim_target.log 2>&1 &

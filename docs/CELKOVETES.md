@@ -146,10 +146,9 @@ Ugyanez a `target_follower.py` fut, a következő eltérésekkel:
 - **Irány ellenőrzése, egyszer:**
   - Adj kézzel egy pontot balra (`y > 0`): a test balra forduljon.
   - Adj egy pontot fent (`z > 0`): a test orral felfelé dőljön.
-  - Ha valamelyik fordítva megy, `-p yaw_sign:=-1.0` vagy `-p pitch_sign:=-1.0`.
-  - Az alapérték `yaw_sign = +1`, `pitch_sign = +1`: a valódi robot +yaw parancsra balra fordul.
-  - A Gazebo-modellben a yaw tükrözött (+yaw parancsra jobbra fordul), ezért a `run.sh` ott
-    `yaw_sign = -1`-gyel indítja a követőt. A fel-le irány a kettőben egyezik.
+  - Ha valamelyik fordítva megy, `-p yaw_sign:=1.0` vagy `-p pitch_sign:=-1.0`.
+  - A Gazebóban mért alapértékek: `yaw_sign = -1` (+yaw parancsra jobbra fordul), `pitch_sign = +1`.
+    A valódi roboton ez még nincs ellenőrizve.
 - **Első próba:** az első próbát a robot alátámasztva vagy kis szöghatárokkal érdemes kezdeni (`-p max_yaw:=10.0 -p max_pitch:=5.0`).
 
 ## Korlátok
@@ -161,8 +160,5 @@ Ugyanez a `target_follower.py` fut, a következő eltérésekkel:
 - **A szimulációban a test elfordítása a talpakat is elcsúsztatja** (talajsúrlódás `mu` = 0,2), ezért a robot
   lassan elfordul és arrébb kerül. A követés ettől még működik, mert a követő mindig a test aktuális
   helyzetéhez képest számol.
-- **A szimulációban a yaw iránya tükrözött** a valódi robothoz képest: ugyanarra a yaw parancsra
-  a Gazebo-modell az ellenkező irányba fordul. A követés ott is helyes, mert a követő a szimulációban
-  fordított előjellel fut. A pult yaw csúszkája a szimulációban emiatt fordítva hat.
 - **Lemaradás:** mozgó célnál a lemaradás kb. a cél szögsebessége osztva a `gain`-nel (3/s), plusz a
   késleltetés. 10°/s-os célnál ez kb. 4–5°.

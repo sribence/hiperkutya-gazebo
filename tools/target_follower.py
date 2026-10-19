@@ -19,9 +19,8 @@ lost_hold s-ig tart, utána lassan visszaáll egyenesbe.
 
 Paraméterek (--ros-args -p nev:=ertek):
   gain            1/s: a szöghiba ennyi-szeresét javítja másodpercenként (3 = kb. 0,5 s alatt beáll)
-  yaw_sign, pitch_sign   +1 / -1: a parancs előjele. A valódi roboton +yaw balra, +pitch felfelé
-                  fordít, ezért az alap +1 / +1. A Gazebo-modellben a yaw tükrözött (+yaw jobbra),
-                  ott a run.sh yaw_sign = -1-gyel indítja. Új roboton EGYSZER ellenőrizni kell.
+  yaw_sign, pitch_sign   +1 / -1: a parancs előjele. Gazebóban mérve: +yaw jobbra, +pitch felfelé
+                  fordít, ezért yaw_sign = -1, pitch_sign = +1. A valódi roboton EGYSZER ellenőrizni kell.
   max_yaw, max_pitch     fokban. 150 mm testmagasságnál a javított IK (fixes/apply_fixes.sh 8.)
                   yaw ±30 mellett pitch -10..+5 fokig mindent elér; ezen túl egyes lábak nem érnek
                   le, ilyenkor az IK az előző testhelyzetet tartja. Ezért 30 / 10 az alap.
@@ -90,7 +89,7 @@ def main():
     class Follower(Node):
         def __init__(self):
             super().__init__("target_follower")
-            p = {"gain": 3.0, "yaw_sign": 1.0, "pitch_sign": 1.0, "max_yaw": 30.0, "max_pitch": 10.0,
+            p = {"gain": 3.0, "yaw_sign": -1.0, "pitch_sign": 1.0, "max_yaw": 30.0, "max_pitch": 10.0,
                  "max_rate": 60.0, "min_dist": 0.3, "max_dist": 5.0, "max_age": 0.5, "lost_hold": 1.0, "settle": 3.0}
             for k, v in p.items():
                 self.declare_parameter(k, v)
