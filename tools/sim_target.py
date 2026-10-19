@@ -45,6 +45,7 @@ class SimTarget(Node):
             self.declare_parameter(k, v)
         self.p = lambda k: self.get_parameter(k).value
         self.pose = None
+        self.ball_pos = None
         self.queue = deque()
         self.spawn_ball()
         threading.Thread(target=self.read_pose, daemon=True).start()
@@ -74,10 +75,14 @@ class SimTarget(Node):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def read_pose(self):
-        """Egyetlen tartós gz-folyamat olvassa a robot valódi helyzetét és orientációját."""
+        """Egyetlen tartós gz-folyamat olvassa a robot helyzetét, orientációját és a labda helyét.
+
+        A labda helyét nem a ball(t)-ből számoljuk: az actor a pályáját a betöltésétől játssza le,
+        nem a szimulációs óra nullájától, így a számolt és a látható labda fáziseltolódásban lenne."""
         num = r"(-?[\d.e+-]+)"
         pat = re.compile(r'name: "HyperDog" id: \d+ position \{ x: %s y: %s z: %s .*?'
                          r'orientation \{ x: %s y: %s z: %s w: %s' % ((num,) * 7))
+        bpat = re.compile(r'name: "cel" id: \d+ position \{ x: %s y: %s z: %s' % ((num,) * 3))
         gz = subprocess.Popen(["gz", "topic", "-e", "/gazebo/default/pose/info", "-u"],
                               stdout=subprocess.PIPE, text=True)
         for line in gz.stdout:
@@ -85,13 +90,16 @@ class SimTarget(Node):
             if m:
                 v = list(map(float, m.groups()))
                 self.pose = (v[:3], v[3:])
+            b = bpat.search(line)
+            if b:
+                self.ball_pos = tuple(map(float, b.groups()))
 
     def tick(self):
         now = self.get_clock().now()
         t = now.nanoseconds / 1e9
-        if self.pose:
+        if self.pose and self.ball_pos:
             pos, q = self.pose
-            bx, by, bz = self.ball(t)
+            bx, by, bz = self.ball_pos
             x, y, z = quat_rotate_inv(q, (bx - pos[0], by - pos[1], bz - pos[2]))
             n = self.p("noise")
             x, y, z = x + random.gauss(0, n), y + random.gauss(0, n), z + random.gauss(0, n)
