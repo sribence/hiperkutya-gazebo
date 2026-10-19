@@ -1,6 +1,7 @@
 # HyperDog Gazebo-szimuláció javításokkal, böngészős képpel (noVNC) és vezérlőpulttal.
 # Build:  docker build -t hiperkutya-gazebo .
 # Futás:  docker run -d --name hiperkutya -p 6080:6080 -p 6081:6081 hiperkutya-gazebo
+# Gamepaddel (Linux): docker run -d --name hiperkutya --device /dev/input -p 6080:6080 hiperkutya-gazebo
 # Kép:    http://localhost:6080/vnc.html?autoconnect=1&resize=scale
 # Pult:   http://localhost:6081
 FROM osrf/ros:foxy-desktop
@@ -27,6 +28,6 @@ RUN git init -q hyperdog_ros2 && cd hyperdog_ros2 && \
 WORKDIR /ws
 RUN . /opt/ros/foxy/setup.sh && colcon build 2>&1 | tail -20
 
-COPY tools/pd_bridge.py tools/hd_web.py docker/run.sh /opt/hiperkutya/
+COPY tools/pd_bridge.py tools/hd_web.py tools/gamepad_teszt.py docker/run.sh /opt/hiperkutya/
 ENV ROS_DOMAIN_ID=77
 CMD ["bash", "/opt/hiperkutya/run.sh"]

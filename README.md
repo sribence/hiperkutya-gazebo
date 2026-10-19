@@ -53,11 +53,48 @@ A vezérlőpult billentyűi nyomva tartva működnek, és ehhez a pult fülének
 
 A pulton vannak csúszkák a testmagassághoz (80–240 mm) és a testdőléshez (roll, pitch, yaw), valamint egy járásmód-választó. A pult ugyanazt a `/hyperdog_joy_ctrl_cmd` üzenetet küldi 10 Hz-en, amit a gamepad-teleop küldene. A ROS-oldalon tehát minden úgy fut, mint a valódi robotnál.
 
+### Gamepaddel (az eredeti teleop-lánccal)
+
+Linuxon a konténer megkaphatja a gépre dugott gamepadet. Ilyenkor a robotot az eredeti `joy_node` + `hyperdog_teleop_joy_node` lánc vezérli, ugyanúgy, mint a valódi robotot:
+
+```bash
+docker run -d --name hiperkutya --device /dev/input -p 6080:6080 hiperkutya-gazebo
+```
+
+- A `/dev/input` egész könyvtárát kell átadni, nem elég a `/dev/input/js0`. A Foxy `joy` csomagja (3.0.1) SDL2-vel olvassa a gamepadet, és ehhez az `event*` eszközök kellenek.
+- A gamepadet **indítás előtt** dugd be. Utólag bedugott eszközt a konténer nem lát, ilyenkor `docker restart hiperkutya`.
+- Indításkor a konténer magától dönt: ha lát joystickot (`/dev/input/js*`), gamepad-módban indul, különben webes pulttal. Kézzel is megadható: `-e CONTROL=gamepad` vagy `-e CONTROL=web`. Hogy melyik lett: `docker exec hiperkutya cat /tmp/control.txt`.
+- **A webes pult és a gamepad nem futhat egyszerre.** Mindkettő a `/hyperdog_joy_ctrl_cmd` topicra küld, és felülírják egymást. A pult ráadásul folyamatosan, 10 Hz-en küld. Gamepad-módban ezért a pult nem indul el.
+- Windowson és macOS-en a Docker Desktop nem adja át a gamepadet. Ott a webes pult marad, vagy natív Linuxos ROS2-telepítés kell (lásd lent).
+
+Gombkiosztás a `hyperdog_teleop/src/hyperdog_teleop_joy.cpp` alapján. A teleop **Xbox-kiosztású** (XInput) controllert vár, más controllernél a gombsorszámok eltérhetnek: ellenőrizd a `ros2 topic echo /joy` paranccsal.
+
+| Gamepad | Hatás |
+|---|---|
+| **Start** | felállás / leülés (váltó) |
+| **d-pad fel / le** | testmagasság ±5 mm lépésenként (90–250 mm, induláskor 90 mm) |
+| **LB + d-pad fel / le** | **lábemelés magassága** (induláskor 0!) |
+| **A / B / X / Y** | járásmód: 0 pacsi / 1 trot / 2 wave gait / 3 gyors trot (induláskor 0 = pacsi) |
+| **Back** | járás be / ki (váltó, csak felállt robotnál) |
+| **jobb bot** | lépés: előre-hátra max. 250 mm, oldalra max. 150 mm |
+| **jobb bot benyomva** | oldalazás ↔ fordulás váltó (a jobb bot vízszintes iránya) |
+| **bal bot** | testdőlés: roll ±45°, pitch ±40° |
+| **LT / RT** | yaw ±50° |
+| **bal bot benyomva + bal bot** | test eltolása előre-hátra-oldalra |
+
+**Helyes sorrend a járáshoz:** Start → d-pad fel, amíg a test kb. 150 mm magas (kb. 1 s) → **LB + d-pad fel**, amíg a lábemelés kb. 40 mm (kb. 0,5 s) → **B** (trot) → Back → jobb bot **óvatosan** előre. Mérve: 20%-os botkitéréssel (50 mm-es lépés) kb. 5 cm/s.
+
+A `tools/gamepad_teszt.py` gamepad nélkül is végigjátssza ezt a sorrendet. Szimulált `/joy` üzeneteket küld, és kiírja, hogyan változik a teleop kimenete. Konténerben:
+
+```bash
+docker exec -it hiperkutya bash -c "source /ws/install/setup.bash && python3 /opt/hiperkutya/gamepad_teszt.py"
+```
+
 Hasznos parancsok:
 
 ```bash
 docker exec -it hiperkutya bash      # belépés; benne: source /ws/install/setup.bash
-docker exec hiperkutya tail -f /tmp/cmd.log   # naplók: sim, cmd, pd, ik, web .log
+docker exec hiperkutya tail -f /tmp/cmd.log   # naplók: sim, cmd, pd, ik, web / joy, teleop .log
 docker restart hiperkutya
 docker rm -f hiperkutya
 ```
@@ -124,7 +161,13 @@ A sorszámok az eredeti repó `604f836` commitjára vonatkoznak. Mind a 7 kódhi
 
 - **Tünet:** minden node fut, de a robot fekve marad.
 - **Ok:** ez nem hiba, csak könnyű elfelejteni. A Gazebo magától nem mozgatja a robotot. Parancs csak gamepadről (`joy_node` + `hyperdog_teleop_joy_node`) vagy saját publisherből jön a `/hyperdog_joy_ctrl_cmd` topicra. Először a start kell (`states[0]`, gamepaden Start gomb): erre feláll. Utána a walk (`states[1]`, Back gomb): erre lép.
-- **Javítás:** a Docker-környezetben ezt a [`tools/hd_web.py`](tools/hd_web.py) webes pult végzi.
+- **Javítás:** a Docker-környezetben ezt a [`tools/hd_web.py`](tools/hd_web.py) webes pult végzi, vagy a gamepad (lásd fent).
+
+### 6b. Gamepaddel feláll, de járásparancsra egy helyben marad
+
+- **Tünet:** Start után feláll, Back és a jobb bot után a lábak mozognak (vagy pacsit adnak), de a robot nem halad.
+- **Ok:** a teleop a lábemelés magasságát (`gait_step.z`) 0-ról indítja, és csak **LB + d-pad fel** növeli. Emelés nélkül a lábak nem válnak el a talajtól. A járásmód is 0-ról (pacsi) indul, ezért járás előtt a **B**-t meg kell nyomni. Ha a test 100 mm alatt van, a teleop magától emel. Ekkor viszont alacsony testtel és teljes botkitéréssel (250 mm-es lépés) a mozgás kaotikus: mérve 2,6 m 8 s alatt, közben 164°-os elfordulással.
+- **Javítás:** a fenti sorrend: Start → test fel → LB + d-pad fel → B → Back → jobb bot óvatosan.
 
 ### 7. Ártalmatlan, de félrevezető üzenet
 
@@ -170,7 +213,7 @@ ros2 run joy joy_node                                           # gamepaddel
 ros2 run hyperdog_teleop hyperdog_teleop_joy_node
 ```
 
-Gamepaden: **Start** (feláll), **B** (trot), **Back** (járás be/ki), a botokkal pedig irányítod. Gamepad helyett a webes pult is működik:
+Gamepaden a sorrend: **Start** → d-pad fel (testmagasság) → **LB + d-pad fel** (lábemelés, induláskor 0!) → **B** (trot) → **Back** (járás) → jobb bot óvatosan. A teljes kiosztás [fent](#gamepaddel-az-eredeti-teleop-lánccal) van. Gamepad helyett a webes pult is működik, de a kettő egyszerre ne fusson:
 
 ```bash
 python3 /útvonal/hiperkutya-gazebo/tools/hd_web.py   # majd: http://localhost:6081
@@ -266,8 +309,9 @@ Mérés a Docker-környezetben, sík talajon. Valós időhöz viszonyított sebe
 | [`fixes/apply_fixes.sh`](fixes/apply_fixes.sh) | az összes kódjavítás az eredeti forrásra, kommentekkel és önellenőrzéssel |
 | [`tools/pd_bridge.py`](tools/pd_bridge.py) | PD-szabályzó node: szögparancsból nyomaték (erőalapú mód) |
 | [`tools/hd_web.py`](tools/hd_web.py) | böngészős vezérlőpult (gamepad helyett), billentyűzettel |
+| [`tools/gamepad_teszt.py`](tools/gamepad_teszt.py) | gamepad nélküli teszt: szimulált `/joy` üzenetek, kiírja a teleop kimenetét |
 | [`Dockerfile`](Dockerfile) | Foxy + Gazebo + az eredeti repó rögzített commitja + javítások + noVNC |
-| [`docker/run.sh`](docker/run.sh) | a konténer indítószkriptje (kijelző, Gazebo, node-ok, pult) |
+| [`docker/run.sh`](docker/run.sh) | a konténer indítószkriptje (kijelző, Gazebo, node-ok, gamepad vagy webes pult) |
 | [`media/`](media/) | demóvideó és kép |
 
 ## Licenc és forrás
