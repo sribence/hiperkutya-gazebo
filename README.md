@@ -15,6 +15,7 @@ Videó az összes mozgásmódról: [media/hyperdog_demo.mp4](media/hyperdog_demo
 ## Tartalom
 
 - [Gyors indítás Dockerrel](#gyors-indítás-dockerrel)
+- [Célkövetés: a robot a célpont felé néz](docs/CELKOVETES.md)
 - [Az eredeti problémák](#az-eredeti-problémák)
 - [Javítás saját ROS2-telepítésen](#javítás-saját-ros2-telepítésen)
 - [Hibakeresés: hol akad el a parancs?](#hibakeresés-hol-akad-el-a-parancs)
@@ -101,13 +102,27 @@ docker rm -f hiperkutya
 
 A konténer `ROS_DOMAIN_ID=77`-tel fut, így nem keveredik a hálózaton lévő más ROS2-forgalommal.
 
+### Célkövetés
+
+A robot álló helyzetben a teste elfordításával és megdöntésével egy célpont felé néz.
+A célpontot egy külön program küldi térbeli pontként (`/target_point`, `geometry_msgs/PointStamped`,
+méter, a robot testéhez képest). Szimulált, fel-le és oldalra mozgó labdával:
+
+```bash
+docker run -d --name hiperkutya -e TARGET=sim -p 6080:6080 -p 6081:6081 hiperkutya-gazebo
+```
+
+Utána a pulton **F** (felállás). `-e TARGET=on` esetén a követő a saját programod pontjait követi.
+Az üzenet pontos formátuma, a követő biztonsági szabályai és a kamerás oldal feladatai:
+[docs/CELKOVETES.md](docs/CELKOVETES.md).
+
 ---
 
 ## Az eredeti problémák
 
 A hibák egymásra rakódnak. Ha egyet megjavítasz, a következő még megállíthatja a robotot, és a legtöbb hiba **hibaüzenet nélkül** jelentkezik: a robot egyszerűen nem mozdul.
 
-A sorszámok az eredeti repó `604f836` commitjára vonatkoznak. Mind a 7 kódhibát a [`fixes/apply_fixes.sh`](fixes/apply_fixes.sh) javítja.
+A sorszámok az eredeti repó `604f836` commitjára vonatkoznak. Mind a 9 kódhibát a [`fixes/apply_fixes.sh`](fixes/apply_fixes.sh) javítja.
 
 ### 1. A launch fájl hibával leáll
 
@@ -174,6 +189,39 @@ A sorszámok az eredeti repó `604f836` commitjára vonatkoznak. Mind a 7 kódhi
 - **Üzenet:** induláskor a Gazebo másodpercenként ezt írja: `command size (0) does not match number of interfaces (12)`
 - **Ok:** az IK, amíg nem kap parancsot, üres tömböt küld. Nem okoz hibát. A `pd_bridge.py` kiszűri.
 
+### 8. Testelfordításnál a robot megdől vagy felborul (IK-hiba)
+
+Ez a valódi robotot is érinti: a hiba a `hyperdog_ctrl` IK-jában van, nem a szimulációban.
+
+- **Tünet:**
+  - Yaw és pitch együtt kiadva (pl. 20° és −10°) a robot oldalra dől, egy lába felemelkedik.
+  - Kicsit nagyobb szögnél felborul.
+  - 45° yaw és 25° pitch együtt kiadva a robot „befagy”.
+- **Ok, két hiba együtt:**
+  1. **Rossz ágat választ a megoldás.** A `InverseKinematics.get_joint_angles` arccos-os megoldása sok helyzetben
+     rossz ágat választ. A kiszámolt szögekből visszaszámolva a talp 1–28 cm-rel máshova kerül,
+     mint ahova kellene. Helyes eredményt csak kb. |yaw| ≤ 10° és pitch −5…+10° között ad.
+  2. **Nem minden elérhetetlen pózt ismer fel.** Az `is_singularity` csak a csípő–talp távolságot nézi, azt nem, hogy a talp a csípő
+     L1 = 104 mm sugarú körén belülre esne. Ilyenkor az IK nem jelez, csak rossz szöget ad.
+- **Javítás:**
+  - Pontos inverz ugyanarra a lábgeometriára: a csípőszög `atan2`-vel, a comb és a lábszár
+    koszinusztétellel, a térd mindig ugyanarra hajlik.
+  - Az elérhetetlen pózt az `is_singularity` jelzi, ilyenkor az IK a gyári logika szerint az
+    előző testhelyzetet tartja.
+- **Eredmény:**
+  - 150 mm testmagasságnál a lábak minden helyzetben oda kerülnek, ahova kell.
+  - Ahová nem érnek el, ott a robot tart, nem borul.
+  - Yaw ±30° mellett pitch −10…+5° mindenhol elérhető.
+
+### 9. Szingularitás után a csuklók elrántanak
+
+- **Ok:**
+  - Az `inverse_kinematic_node.py` a szögeket helyben váltja radiánból fokba, abban a tömbben,
+    amit az IK „előző jó szögként” is tárol.
+  - Ha egy láb elérhetetlen pózba kerül, az IK ezt az „előző” tömböt adja vissza, ami ekkor már fokban van.
+  - A node ezt még egyszer fokba váltja, így pl. 45° helyett 2578° megy ki.
+- **Javítás:** a node az IK eredményének másolatával dolgozik (`.copy()`).
+
 ### A környezet buktatói (nem a robotkód hibái)
 
 - **Lejárt ROS apt-kulcs:** a régi `osrf/ros:foxy-desktop` image-ben a csomagforrás kulcsa lejárt, ezért az `apt-get update` hibát dob. Javítás: a friss `ros.key` letöltése, lásd a [`Dockerfile`](Dockerfile)-t.
@@ -200,7 +248,7 @@ colcon build --packages-select hyperdog_msgs hyperdog_gazebo_sim hyperdog_ctrl h
 source install/setup.bash
 ```
 
-A szkript a végén ellenőrzi magát. Ha mind a 7 javítás illeszkedett, ezt írja ki: `Mind a 7 javítás rendben.` Ha az eredeti repó azóta megváltozott, név szerint jelzi, melyik javítás nem talált. A szkript többször is lefuttatható.
+A szkript a végén ellenőrzi magát. Ha mind a 9 javítás illeszkedett, ezt írja ki: `Mind a 9 javítás rendben.` Ha az eredeti repó azóta megváltozott, név szerint jelzi, melyik javítás nem talált. A szkript többször is lefuttatható.
 
 Indítás. Mindegyik sor külön terminálban fusson, és mindegyikben legyen `source install/setup.bash`:
 
@@ -310,6 +358,9 @@ Mérés a Docker-környezetben, sík talajon. Valós időhöz viszonyított sebe
 | [`tools/pd_bridge.py`](tools/pd_bridge.py) | PD-szabályzó node: szögparancsból nyomaték (erőalapú mód) |
 | [`tools/hd_web.py`](tools/hd_web.py) | böngészős vezérlőpult (gamepad helyett), billentyűzettel |
 | [`tools/gamepad_teszt.py`](tools/gamepad_teszt.py) | gamepad nélküli teszt: szimulált `/joy` üzenetek, kiírja a teleop kimenetét |
+| [`tools/target_follower.py`](tools/target_follower.py) | célkövetés: a `/target_point` célpont felé fordítja a testet (yaw, pitch), ellenőrzésekkel és korlátokkal |
+| [`tools/sim_target.py`](tools/sim_target.py) | szimulált célpont: mozgó piros labda a Gazebóban, a helyzetét `/target_point`-ként küldi |
+| [`docs/CELKOVETES.md`](docs/CELKOVETES.md) | a célkövetés leírása: üzenetformátum, biztonsági szabályok, a kamerás oldal feladatai |
 | [`Dockerfile`](Dockerfile) | Foxy + Gazebo + az eredeti repó rögzített commitja + javítások + noVNC |
 | [`docker/run.sh`](docker/run.sh) | a konténer indítószkriptje (kijelző, Gazebo, node-ok, gamepad vagy webes pult) |
 | [`media/`](media/) | demóvideó és kép |

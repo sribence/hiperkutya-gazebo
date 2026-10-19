@@ -43,6 +43,49 @@ sed -i -e 's|forward_command_controller/ForwardCommandController|effort_controll
 sed -i 's/^    hyperdog_gz_joint_ctrl_node,$/    # hyperdog_gz_joint_ctrl_node,  # helyette: tools\/pd_bridge.py/' \
        $SIM/launch/hyperdog_gazebo_sim.launch.py
 
+# 8. Az IK (get_joint_angles) arccos-os megoldása sok testhelyzetben rossz ágat választ: a talp
+#    1-28 cm-rel máshova kerül, mint kellene, és a robot megdől vagy felborul. Helyes csak kb.
+#    |yaw| <= 10 fokig (pitch -5..+10 mellett). Pontos inverz ugyanarra a lábgeometriára:
+#    csípő atan2-vel, a két combszakasz koszinusztétellel (a térd mindig ugyanarra hajlik).
+#    Ez a valódi robot kódja is (hyperdog_ctrl), ott is kell.
+IKF=$R/hyperdog_ctrl/IK/InverseKinematics.py
+grep -q '# javított IK' $IKF || python3 - "$IKF" <<'EOF'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+new = '''    def get_joint_angles(self, coord):
+        """
+            coord: np array with desired leg coordinate -> np.array([x, y, z])
+            return: np array with joint angles -> np.array([th0, th1, th2])
+        """
+        # javított IK: pontos inverz (atan2 + koszinusztétel); az elérhetetlen pontot a hívó kiszűri
+        joint_ang = np.zeros([3])
+        if self.is_singularity(coord):
+            return joint_ang
+        x, y, z = coord
+        rp = np.sqrt(max(y**2 + z**2 - self.L1**2, 0.0))    # a láb síkjában mért "lefelé" távolság
+        th0 = np.arctan2(rp, self.L1) - np.arctan2(z, y)
+        k = (x**2 + rp**2 - self.L2**2 - self.L3**2) / (2*self.L2*self.L3)
+        q = -np.arccos(np.clip(k, -1.0, 1.0))                  # térdszög a combhoz képest
+        a = np.arctan2(rp, x) - np.arctan2(self.L3*np.sin(q), self.L2 + self.L3*np.cos(q))
+        joint_ang[:] = th0, np.pi - a, a + q
+        return joint_ang
+
+'''
+s, n = re.subn(r"    def get_joint_angles\(self, coord\):.*?return joint_ang\n\n", new, s, flags=re.S)
+assert n == 1, "get_joint_angles nem található"
+# a gyári ellenőrzés csak a csípő-talp távolságot nézi; az is elérhetetlen, ha a talp a csípő
+# L1 sugarú körén belülre esne (y-z síkban)
+old = "        if r >= self.MIN_LEG_R and r <= self.MAX_LEG_R:"
+assert old in s, "is_singularity nem található"
+s = s.replace(old, "        if r >= self.MIN_LEG_R and r <= self.MAX_LEG_R and coord[1]**2 + coord[2]**2 > self.L1**2:")
+open(p, "w").write(s)
+EOF
+
+# 9. Az IK node a szögeket helyben váltja fokba, abban a tömbben, amit az IK "előző jó szögként"
+#    tárol. Szingularitás után ezt még egyszer fokba váltaná (45 -> 2578 fok). Másolat kell.
+sed -i 's/^\(        ang_[FB][RL] = self.IK.get_[FB][RL]_joint_angles([a-z_]*, eulerAng)\)$/\1.copy()/' \
+       $R/hyperdog_ctrl/IK/inverse_kinematic_node.py
+
 # Ellenőrzés: ha a forrás megváltozott és egy javítás nem talált, itt kiderül
 fail=0
 chk(){ grep -q "$2" "$1" || { echo "NEM SIKERÜLT: $3 ($1)" >&2; fail=1; }; }
@@ -54,5 +97,7 @@ nchk $SIM/description/gazebo_ros2_control_plugin.xacro 'command_interface name="
 nchk $SIM/description/consts.xacro 'friction="10000"' "5. csuklósúrlódás"
 chk  $SIM/config/hyperdog_joint_controller.yaml 'JointGroupEffortController' "6. effort controller"
 chk  $SIM/launch/hyperdog_gazebo_sim.launch.py '# hyperdog_gz_joint_ctrl_node' "7. pozíciós híd ki"
-[ $fail = 0 ] && echo "Mind a 7 javítás rendben."
+chk  $IKF '# javított IK' "8. IK pontos inverz"
+[ "$(grep -c 'eulerAng).copy()' $R/hyperdog_ctrl/IK/inverse_kinematic_node.py)" = 4 ] || { echo "NEM SIKERÜLT: 9. IK node másolat" >&2; fail=1; }
+[ $fail = 0 ] && echo "Mind a 9 javítás rendben."
 exit $fail
